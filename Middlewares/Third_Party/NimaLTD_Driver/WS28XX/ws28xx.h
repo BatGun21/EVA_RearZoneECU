@@ -45,6 +45,7 @@ extern "C"
 #define COLOR_RGB565_MAGENTA       0xF81F      /* 255,   0, 255 */
 #define COLOR_RGB565_YELLOW        0xFFE0      /* 255, 255,   0 */
 #define COLOR_RGB565_ORANGE        0xFD20      /* 255, 165,   0 */
+#define COLOR_RGB565_AMBER         0xFBE0      /* 255, 191,   0 */
 #define COLOR_RGB565_PINK          0xFC18      /* 255, 192, 203 */
 #define COLOR_RGB565_PURPLE        0x780F      /* 128,   0, 128 */
 #define COLOR_RGB565_TEAL          0x0438      /*   0, 128, 128 */
@@ -83,6 +84,7 @@ extern "C"
 #define COLOR_RGB888_MAGENTA       0xFF00FF    /* 255,   0, 255 */
 #define COLOR_RGB888_YELLOW        0xFFFF00    /* 255, 255,   0 */
 #define COLOR_RGB888_ORANGE        0xFFA500    /* 255, 165,   0 */
+#define COLOR_RGB888_AMBER         0xFFBF00    /* 255, 191,   0 */
 #define COLOR_RGB888_PINK          0xFFC0CB    /* 255, 192, 203 */
 #define COLOR_RGB888_PURPLE        0x800080    /* 128,   0, 128 */
 #define COLOR_RGB888_TEAL          0x008080    /*   0, 128, 128 */

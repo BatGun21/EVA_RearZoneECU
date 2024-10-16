@@ -36,22 +36,42 @@
 typedef enum {
     OFF_STATE,
     STARTUP_MODE,
-    POSITION_LIGHT_MODE,
+    POSITION_LIGHT_MODE,  // Marker Light
     BRAKE_LIGHT_MODE,
-	TURN_SIGNAL,
-	HAZARD_MODE
+    TURN_SIGNAL_MODE,     // Turn Signal (Amber wave)
+    HAZARD_MODE,           // Hazard (Amber blink)
+	REVERSE_LIGHT_MODE    // White Light
 } LED_State;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define Clock_Frequency 36000 //KHz
+
 // Middle strip definition
 #define MIDDLE_LED_COUNT 144
+#define TOP_RIGHT_LED_COUNT 46
+#define TOP_LEFT_LED_COUNT 46
+#define LEFT_BOTTOM_LED_COUNT 46
+#define RIGHT_BOTTOM_LED_COUNT 46
+#define NUMBER_PLATE_LED_COUNT 28
+#define HMSL_LED_COUNT 28
 #define BRAKE_BRIGHTNESS 255
+#define REVERSE_LIGHT_BRIGHTNESS 255
+#define NUMBER_PLATE_BRIGHTNESS 255
 #define POSITION_BRIGHTNESS 100
 #define STARTUP_WAVE_SPEED 20
 #define WAVE_PACKET_SIZE_MIDDLE 3
 #define MIDDLE_LED_MID_INDEX (MIDDLE_LED_COUNT / 2)
+
+#define WAVE_PACKET_SIZE 7
+#define WAVE_SPEED 5 // Increase number to reduce speed
+#define WAVE_STEP_SIZE 1
+#define WAVE_PAUSE 10
+
+#define HAZARD_BLINK_DELAY 500
+#define DRL_BRIGHTNESS 255 // Max 255
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -62,13 +82,25 @@ typedef enum {
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-WS28XX_HandleTypeDef ws_pa9;
+WS28XX_HandleTypeDef ws_pa9;  // Middle LED Strip
+WS28XX_HandleTypeDef ws_pa8;  // Left Top LED Strip
+WS28XX_HandleTypeDef ws_pa10; // Right Top LED Strip
+WS28XX_HandleTypeDef ws_pa0;  // Left Bottom LED Strip
+WS28XX_HandleTypeDef ws_pa2;  // Right Bottom LED Strip
+WS28XX_HandleTypeDef ws_pa1;  // Number Plate Light
+WS28XX_HandleTypeDef ws_pa11; // HMSL
 LED_State current_state_pa9 = OFF_STATE;
+LED_State current_state_pa8 = OFF_STATE;
+LED_State current_state_pa10 = OFF_STATE;
 
 //Control flags
-int brake_signal_received = 1;     // 1 if brake signal is received, 0 otherwise
-int headlamp_signal_received = 0;  // 1 if headlamp is on, 0 otherwise
-int startup_signal_received = 1;   // Initially active for startup mode
+int brake_signal_received = 0;     // 1 if brake signal is received, 0 otherwise
+int headlamp_signal_received = 1;  // 1 if headlamp is on, 0 otherwise
+int startup_signal_received = 0;   // Initially active for startup mode
+int turn_signal_left_received = 0;
+int turn_signal_right_received = 0;
+int hazard_signal_received = 0;
+int reverse_signal_received = 0;
 
 // Timing variables for wave animation
 static int wave_count_middle = 0;
@@ -77,19 +109,38 @@ static int frame_right = MIDDLE_LED_MID_INDEX;
 static uint8_t wave_direction = 0;  // 0 = outward, 1 = inward
 static int last_update_time = 0;
 static int sequential_turn_on = 0;
+int frame_pa8 = 0;   // Left Top Strip (PA8)
+int frame_pa10 = 0;  // Right Top Strip (PA10)
 
 // Flickering prevention flags
 int is_position_light_displayed = 0;
 int is_brake_light_displayed = 0;
+int is_position_light_displayed_left = 0;  // Left Top Strip (PA8)
+int is_position_light_displayed_right = 0;  // Right Top Strip (PA10)
+int is_reverse_light_displayed_left = 0;
+int is_reverse_light_displayed_right = 0;
+int is_number_plate_light_displayed = 0;
+int is_hmsl_light_displayed = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 void HandleMiddleStripState(void);
+void HandleLeftTopStripState(void);
+void HandleRightTopStripState(void);
+void UpdateTurnSignalWave(WS28XX_HandleTypeDef* ws, int frame, int pixel_count);
+void UpdateHazardBlink(int pixel_count);
 void UpdateStartupWaveForMiddle(WS28XX_HandleTypeDef* ws);
 void UpdatePositionLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_position_light_displayed);
 void UpdateBrakeLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_brake_light_displayed);
 void ResetLEDStrip(WS28XX_HandleTypeDef* ws, int pixel_count);
+void HandleBottomLeftStripState(void);
+void HandleBottomRightStripState(void);
+void HandleNumberPlateLightState(void);
+void HandleHMSLState(void);
+void UpdateReverseLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_light_displayed);
+void UpdateNumberPlateLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_light_displayed);
+void UpdateHMSLLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_light_displayed);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -132,7 +183,10 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  WS28XX_Init(&ws_pa9, &htim1, 36, TIM_CHANNEL_2, MIDDLE_LED_COUNT);
+  WS28XX_Init(&ws_pa8, &htim1, 36, TIM_CHANNEL_1, TOP_LEFT_LED_COUNT);   // Initialize for PA8
+  WS28XX_Init(&ws_pa9, &htim1, 36, TIM_CHANNEL_2, MIDDLE_LED_COUNT); // Initialize for PA9 (middle strip)
+  WS28XX_Init(&ws_pa10, &htim1, 36, TIM_CHANNEL_3, TOP_RIGHT_LED_COUNT); // Initialize for PA10
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -140,6 +194,12 @@ int main(void)
   while (1)
   {
 	  HandleMiddleStripState();
+	  HandleRightTopStripState();
+	  HandleLeftTopStripState();
+	  HandleBottomLeftStripState();
+	  HandleBottomRightStripState();
+	  HandleNumberPlateLightState();
+	  HandleHMSLState();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -229,6 +289,96 @@ void HandleMiddleStripState(void)
             WS28XX_Update(&ws_pa9);
             is_brake_light_displayed = 0;
             is_position_light_displayed = 0;
+            break;
+    }
+}
+
+void HandleLeftTopStripState(void)
+{
+    // Determine the current state based on the signals received
+    if (hazard_signal_received) {
+        current_state_pa8 = HAZARD_MODE;
+    }
+    else if (turn_signal_left_received) {
+        current_state_pa8 = TURN_SIGNAL_MODE;
+    }
+    else if (headlamp_signal_received) {
+        current_state_pa8 = POSITION_LIGHT_MODE;  // Position light = marker light
+    }
+    else {
+        current_state_pa8 = OFF_STATE;
+    }
+
+    // State machine handling for PA8 (Left Top Strip)
+    switch (current_state_pa8) {
+        case TURN_SIGNAL_MODE:
+            UpdateTurnSignalWave(&ws_pa8, frame_pa8, TOP_LEFT_LED_COUNT);  // Amber wave effect
+            frame_pa8 += WAVE_STEP_SIZE;
+            if (frame_pa8 >= TOP_LEFT_LED_COUNT) frame_pa8 = 0;
+            HAL_Delay(WAVE_SPEED);
+            is_position_light_displayed_left = 0;  // Reset position light flag
+            break;
+
+        case HAZARD_MODE:
+            UpdateHazardBlink(TOP_LEFT_LED_COUNT);  // Amber blink
+            HAL_Delay(HAZARD_BLINK_DELAY);
+            is_position_light_displayed_left = 0;  // Reset position light flag
+            break;
+
+        case POSITION_LIGHT_MODE:
+            UpdatePositionLight(&ws_pa8, TOP_LEFT_LED_COUNT, &is_position_light_displayed_left);  // Marker/position light
+            break;
+
+        case OFF_STATE:
+        default:
+            ResetLEDStrip(&ws_pa8, TOP_LEFT_LED_COUNT);  // Turn off all LEDs
+            WS28XX_Update(&ws_pa8);
+            is_position_light_displayed_left = 0;  // Reset position light flag
+            break;
+    }
+}
+
+void HandleRightTopStripState(void)
+{
+    // Determine the current state based on the signals received
+    if (hazard_signal_received) {
+        current_state_pa10 = HAZARD_MODE;
+    }
+    else if (turn_signal_right_received) {
+        current_state_pa10 = TURN_SIGNAL_MODE;
+    }
+    else if (headlamp_signal_received) {
+        current_state_pa10 = POSITION_LIGHT_MODE;  // Position light = marker light
+    }
+    else {
+        current_state_pa10 = OFF_STATE;
+    }
+
+    // State machine handling for PA10 (Right Top Strip)
+    switch (current_state_pa10) {
+        case TURN_SIGNAL_MODE:
+            UpdateTurnSignalWave(&ws_pa10, frame_pa10, TOP_RIGHT_LED_COUNT);  // Amber wave effect
+            frame_pa10 += WAVE_STEP_SIZE;
+            if (frame_pa10 >= TOP_RIGHT_LED_COUNT) frame_pa10 = 0;
+            HAL_Delay(WAVE_SPEED);
+            is_position_light_displayed_right = 0;  // Reset position light flag
+            break;
+
+        case HAZARD_MODE:
+            UpdateHazardBlink(TOP_RIGHT_LED_COUNT);  // Amber blink
+            HAL_Delay(HAZARD_BLINK_DELAY);
+            is_position_light_displayed_right = 0;  // Reset position light flag
+            break;
+
+        case POSITION_LIGHT_MODE:
+            UpdatePositionLight(&ws_pa10, TOP_RIGHT_LED_COUNT, &is_position_light_displayed_right);  // Marker/position light
+            break;
+
+        case OFF_STATE:
+        default:
+            ResetLEDStrip(&ws_pa10, TOP_RIGHT_LED_COUNT);  // Turn off all LEDs
+            WS28XX_Update(&ws_pa10);
+            is_position_light_displayed_right = 0;  // Reset position light flag
             break;
     }
 }
@@ -339,6 +489,129 @@ void UpdateBrakeLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_brake_l
     *is_brake_light_displayed = 1;
 }
 
+void UpdateTurnSignalWave(WS28XX_HandleTypeDef* ws, int frame, int pixel_count)
+{
+    ResetLEDStrip(ws, pixel_count);  // Clear all LEDs
+    for (int i = 0; i < pixel_count; i++) {
+        if (i >= frame && i < frame + WAVE_PACKET_SIZE) {
+            WS28XX_SetPixel_RGBW_565(ws, i, COLOR_RGB565_AMBER, 255);  // Amber wave
+        }
+    }
+    WS28XX_Update(ws);
+}
+
+void UpdateHazardBlink(int pixel_count)
+{
+    static int blink_on = 0;
+
+    for (int i = 0; i < pixel_count; i++) {
+        if (blink_on) {
+        	WS28XX_SetPixel_RGBW_565(&ws_pa10, i, COLOR_RGB565_AMBER, BRAKE_BRIGHTNESS);   // Amber on for right strip
+            WS28XX_SetPixel_RGBW_565(&ws_pa8, i, COLOR_RGB565_AMBER, BRAKE_BRIGHTNESS);   // Amber on for left strip
+        } else {
+            WS28XX_SetPixel_RGBW_565(&ws_pa8, i, COLOR_RGB565_BLACK, 0);  // Off for left strip
+            WS28XX_SetPixel_RGBW_565(&ws_pa10, i, COLOR_RGB565_BLACK, 0);  // Off for right strip
+        }
+    }
+
+    blink_on = !blink_on;
+    WS28XX_Update(&ws_pa8);
+    WS28XX_Update(&ws_pa10);
+}
+
+void HandleBottomLeftStripState(void)
+{
+    if (reverse_signal_received) {
+        UpdateReverseLight(&ws_pa0, LEFT_BOTTOM_LED_COUNT, &is_reverse_light_displayed_left);
+    } else {
+        ResetLEDStrip(&ws_pa0, LEFT_BOTTOM_LED_COUNT);
+        WS28XX_Update(&ws_pa0);
+        is_reverse_light_displayed_left = 0;
+    }
+}
+
+void HandleBottomRightStripState(void)
+{
+    if (reverse_signal_received) {
+        UpdateReverseLight(&ws_pa2, RIGHT_BOTTOM_LED_COUNT, &is_reverse_light_displayed_right);
+    } else {
+        ResetLEDStrip(&ws_pa2, RIGHT_BOTTOM_LED_COUNT);
+        WS28XX_Update(&ws_pa2);
+        is_reverse_light_displayed_right = 0;
+    }
+}
+
+void HandleNumberPlateLightState(void)
+{
+    if (headlamp_signal_received) {
+        UpdateNumberPlateLight(&ws_pa1, NUMBER_PLATE_LED_COUNT, &is_number_plate_light_displayed);
+    } else {
+        ResetLEDStrip(&ws_pa1, NUMBER_PLATE_LED_COUNT);
+        WS28XX_Update(&ws_pa1);
+        is_number_plate_light_displayed = 0;
+    }
+}
+
+void HandleHMSLState(void)
+{
+    if (brake_signal_received) {
+        UpdateHMSLLight(&ws_pa11, HMSL_LED_COUNT, &is_hmsl_light_displayed);
+    } else {
+        ResetLEDStrip(&ws_pa11, HMSL_LED_COUNT);
+        WS28XX_Update(&ws_pa11);
+        is_hmsl_light_displayed = 0;
+    }
+}
+
+/* Helper Functions */
+void UpdateReverseLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_light_displayed)
+{
+    if (*is_light_displayed) {
+        return;  // Avoid redundant refreshes (prevent flickering)
+    }
+
+    ResetLEDStrip(ws, pixel_count);  // Clear previous state
+
+    for (int i = 0; i < pixel_count; i++) {
+        WS28XX_SetPixel_RGBW_565(ws, i, COLOR_RGB565_WHITE, REVERSE_LIGHT_BRIGHTNESS);
+    }
+
+    WS28XX_Update(ws);
+    *is_light_displayed = 1;
+}
+
+void UpdateNumberPlateLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_light_displayed)
+{
+    if (*is_light_displayed) {
+        return;  // Avoid redundant refreshes (prevent flickering)
+    }
+
+    ResetLEDStrip(ws, pixel_count);  // Clear previous state
+
+    for (int i = 0; i < pixel_count; i++) {
+        WS28XX_SetPixel_RGBW_565(ws, i, COLOR_RGB565_WHITE, NUMBER_PLATE_BRIGHTNESS);
+    }
+
+    WS28XX_Update(ws);
+    *is_light_displayed = 1;
+}
+
+void UpdateHMSLLight(WS28XX_HandleTypeDef* ws, int pixel_count, int* is_light_displayed)
+{
+    if (*is_light_displayed) {
+        return;  // Avoid redundant refreshes (prevent flickering)
+    }
+
+    ResetLEDStrip(ws, pixel_count);  // Clear previous state
+
+    for (int i = 0; i < pixel_count; i++) {
+        WS28XX_SetPixel_RGBW_565(ws, i, COLOR_RGB565_RED, BRAKE_BRIGHTNESS);
+    }
+
+    WS28XX_Update(ws);
+    *is_light_displayed = 1;
+}
+
 void ResetLEDStrip(WS28XX_HandleTypeDef* ws, int pixel_count)
 {
     for (int i = 0; i < pixel_count; i++) {
@@ -346,6 +619,8 @@ void ResetLEDStrip(WS28XX_HandleTypeDef* ws, int pixel_count)
     }
     WS28XX_Update(ws);
 }
+
+
 /* USER CODE END 4 */
 
 /**
